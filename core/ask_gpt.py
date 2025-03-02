@@ -74,7 +74,37 @@ def ask_gpt(prompt, response_json=True, valid_def=None, log_title='default'):
             
             if response_json:
                 try:
-                    response_data = json_repair.loads(response.choices[0].message.content)
+                    content = response.choices[0].message.content
+                    # 先尝试直接解析
+                    try:
+                        response_data = json.loads(content)
+                    except json.JSONDecodeError:
+                        try:
+                            # 使用 json_repair 进行修复
+                            response_data = json_repair.loads(content)
+                        except Exception as e:
+                            # 手动处理常见问题
+                            print(f"尝试手动修复 JSON: {str(e)}")
+                            # 检查是否有未加引号的字段
+                            fixed_content = content
+                            if '"reflection":' in fixed_content and '",' in fixed_content:
+                                # 匹配未加引号的 reflection 内容
+                                import re
+                                fixed_content = re.sub(r'"reflection"\s*:\s*([^"][^,]*),', r'"reflection": "\1",', fixed_content)
+                            
+                            try:
+                                response_data = json.loads(fixed_content)
+                            except json.JSONDecodeError:
+                                try:
+                                    response_data = json_repair.loads(fixed_content)
+                                except Exception as e2:
+                                    # 如果还是失败，记录错误并尝试下一次
+                                    response_data = content
+                                    print(f"❎ json_repair parsing failed. Retrying: '''{content}'''")
+                                    save_log(api_set["model"], prompt, content, log_title="error", message=f"json_repair parsing failed: {str(e2)}")
+                                    if attempt == max_retries - 1:
+                                        raise Exception(f"JSON parsing still failed after {max_retries} attempts: {e2}\n Please check your network connection or API key or `output/gpt_log/error.json` to debug.")
+                                    continue
                     
                     # check if the response is valid, otherwise save the log and raise error and retry
                     if valid_def:
@@ -82,7 +112,7 @@ def ask_gpt(prompt, response_json=True, valid_def=None, log_title='default'):
                         if valid_response['status'] != 'success':
                             save_log(api_set["model"], prompt, response_data, log_title="error", message=valid_response['message'])
                             raise ValueError(f"❎ API response error: {valid_response['message']}")
-                        
+                    
                     break  # Successfully accessed and parsed, break the loop
                 except Exception as e:
                     response_data = response.choices[0].message.content
